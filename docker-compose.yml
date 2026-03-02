@@ -1,0 +1,53 @@
+services:
+
+  ollama:
+    image: ollama/ollama
+    container_name: ollama
+    volumes:
+      - ollama_models:/root/.ollama
+    ports:
+      - "11434:11434"
+    networks:
+      - agentic
+    restart: unless-stopped
+
+  ingress:
+    build: .
+    container_name: ingress
+    ports:
+      - "8000:8000"
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - MODEL_NAME=llama3
+    depends_on:
+      - ollama
+    networks:
+      - agentic
+    restart: unless-stopped
+
+  openwebui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: openwebui
+    ports:
+      - "3000:8080"
+    environment:
+      # Point OpenWebUI at our Ingress API instead of a real OpenAI endpoint.
+      - OPENAI_API_BASE_URL=http://ingress:8000/v1
+      - OPENAI_API_KEY=not-used
+      # Disable Ollama's built-in connection so only the shim is used.
+      - ENABLE_OLLAMA_API=false
+    depends_on:
+      - ingress
+    networks:
+      - agentic
+    restart: unless-stopped
+    volumes:
+      - openwebui_data:/app/backend/data
+
+volumes:
+  ollama_models:
+  openwebui_data:
+
+networks:
+  agentic:
+    driver: bridge

@@ -2,6 +2,9 @@
   "name": "agentic-platform",
   "image": "mcr.microsoft.com/devcontainers/python:3",
   "features": {
-    "ghcr.io/rio/features/chezmoi:1": {}
-  }
+    "ghcr.io/rio/features/chezmoi:1": {},
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
+  },
+  "postCreateCommand": "pip install -r requirements.txt",
+  "forwardPorts": [3000, 8000, 11434]
 }
