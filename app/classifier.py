@@ -55,6 +55,7 @@ async def _call_ollama(user_input: str) -> str:
     payload = {
         "model": settings.classifier_model,
         "prompt": prompt,
+        "format": "json",  # Ollama native JSON mode — constrains token generation to valid JSON
         "stream": False,
         "options": {"temperature": 0, "num_predict": settings.max_tokens},
     }
@@ -65,8 +66,14 @@ async def _call_ollama(user_input: str) -> str:
 
 
 def _parse(raw: str) -> Optional[ClassifierResponse]:
+    text = raw.strip()
+    # Strip markdown code fences (```json ... ``` or ``` ... ```) as a fallback
+    # in case a model ignores the format constraint.
+    if text.startswith("```"):
+        lines = text.splitlines()
+        text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:]).strip()
     try:
-        data = json.loads(raw.strip())
+        data = json.loads(text)
         return ClassifierResponse(**data)
     except (json.JSONDecodeError, ValidationError, TypeError):
         return None

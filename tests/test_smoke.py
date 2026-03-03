@@ -88,6 +88,17 @@ async def test_classifier_falls_back_on_invalid_json():
     assert result.confidence == 0.0
 
 
+@pytest.mark.anyio
+async def test_classifier_parses_markdown_fenced_json():
+    """_parse strips markdown code fences before parsing."""
+    from app.classifier import _parse
+
+    fenced = "```json\n{\"intent\": \"execution\", \"confidence\": 0.9}\n```"
+    result = _parse(fenced)
+    assert result is not None
+    assert result.intent == "execution"
+
+
 # ---------------------------------------------------------------------------
 # /ingest happy path (mock Ollama)
 # ---------------------------------------------------------------------------
