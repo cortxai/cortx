@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class ClassifierResponse(BaseModel):
@@ -12,6 +12,13 @@ class ClassifierResponse(BaseModel):
 
 class IngestRequest(BaseModel):
     input: str
+
+    @field_validator("input")
+    @classmethod
+    def input_must_not_be_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("input must not be empty or whitespace")
+        return v
 
 
 class IngestResponse(BaseModel):
