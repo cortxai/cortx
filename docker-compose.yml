@@ -1,31 +1,23 @@
 services:
 
-  ollama:
-    image: ollama/ollama
-    container_name: ollama
-    volumes:
-      - ollama_models:/root/.ollama
-    ports:
-      - "11434:11434"
-    networks:
-      - agentic
-    restart: unless-stopped
-
   ingress:
     build: .
     container_name: ingress
     ports:
       - "8000:8000"
     environment:
-      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
       - CLASSIFIER_MODEL=llama3.2:3b
       - WORKER_MODEL=llama3.2:3b
       - CLASSIFIER_TIMEOUT=60
       - WORKER_TIMEOUT=300
       - MAX_TOKENS=256
       - LOG_LEVEL=INFO
-    depends_on:
-      - ollama
+    extra_hosts:
+      # Allows the container to reach Ollama running on the host.
+      # Works automatically on Docker Desktop (Mac/Windows).
+      # On Linux, requires Docker 20.10+ (host-gateway is resolved automatically).
+      - "host.docker.internal:host-gateway"
     networks:
       - agentic
     restart: unless-stopped
@@ -52,7 +44,6 @@ services:
       - openwebui_data:/app/backend/data
 
 volumes:
-  ollama_models:
   openwebui_data:
 
 networks:

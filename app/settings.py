@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    ollama_base_url: str = "http://ollama:11434"
+    ollama_base_url: str = "http://host.docker.internal:11434"
     classifier_model: str = "llama3.2:3b"
     worker_model: str = "llama3.2:3b"
     classifier_timeout: int = 60   # short: classifier generates ~30 JSON tokens

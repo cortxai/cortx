@@ -1,12 +1,19 @@
 # local-agentic-platform-poc
 This is a PoC - not fit for production use
 
-## Getting Started
+## Prerequisites
 
-### Prerequisites
-- Docker or Podman with Compose (to run the full stack — **must be run on the host machine, not inside the devcontainer**)
-- Python 3.9+ (for tests and running the ingress service directly)
+- **Ollama** — must be installed and running on the host machine before starting the stack.
+  Download from https://ollama.com and pull a model, e.g.:
+  ```bash
+  ollama pull llama3.2:3b
+  ```
+  Ollama must be listening on its default port (`11434`). GPU acceleration is configured by Ollama itself — see the Ollama docs for your platform.
+- **Docker or Podman with Compose** — to run the stack (**must be run on the host machine, not inside the devcontainer**)
+- **Python 3.9+** — for tests and running the ingress service directly
 - (Optional) A devcontainer-capable editor (DevPod, VS Code)
+
+## Getting Started
 
 ### Run the full stack (host machine only)
 
@@ -20,29 +27,30 @@ docker compose up --build
 podman-compose up --build
 ```
 
-Then pull a model (first time only):
+| Service     | URL                    | Notes                      |
+|-------------|------------------------|----------------------------|
+| OpenWebUI   | http://localhost:3000  | Chat interface             |
+| Ingress API | http://localhost:8000  | Internal orchestration API |
+| Ollama      | http://localhost:11434 | Runs on host (not in Docker) |
+
+### Use a remote Ollama instance
+
+Set `OLLAMA_BASE_URL` to point at any Ollama instance before starting:
+
 ```bash
-docker exec -it ollama ollama pull llama3
-# or
-podman exec -it ollama ollama pull llama3
+OLLAMA_BASE_URL=http://192.168.1.50:11434 docker compose up --build
 ```
 
-| Service    | URL                        | Notes                          |
-|------------|----------------------------|--------------------------------|
-| OpenWebUI  | http://localhost:3000      | Chat interface                 |
-| Ingress API| http://localhost:8000      | Internal orchestration API     |
-| Ollama     | http://localhost:11434     | Local LLM runtime              |
+Or edit `OLLAMA_BASE_URL` directly in `docker-compose.yml`.
 
 ### Run the ingress service only (devcontainer / no Docker)
-
-To develop and iterate on the ingress API without the full stack:
 
 ```bash
 pip install -r requirements.txt
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Note: without Ollama running, `/ingest` calls will hit the network-error path and return `intent=ambiguous`. Use the mock-based tests to work without Ollama.
+> Without Ollama running, `/ingest` calls will hit the network-error path and return `intent=ambiguous`. Use the mock-based tests to work without Ollama.
 
 ### Verify the endpoint
 
@@ -74,9 +82,14 @@ User (browser)
   └─► OpenWebUI  (port 3000)
         └─► POST /v1/chat/completions  (Ingress API, port 8000)
               └─► POST /ingest  (internal orchestration)
-                    ├─► Classifier (Ollama) → intent + confidence
+                    ├─► Classifier (Ollama on host) → intent + confidence
                     ├─► Router (pure Python) → handler
-                    └─► Worker (Ollama) → response
+                    └─► Worker (Ollama on host) → response
 ```
+
+Ollama runs on the host machine. The ingress container reaches it via
+`host.docker.internal:11434` (Docker Desktop on Mac/Windows) or via the
+`host-gateway` extra_host on Linux. Override with `OLLAMA_BASE_URL` for
+remote deployments.
 
 See [PLAN.md](PLAN.md) for the full architecture description.
