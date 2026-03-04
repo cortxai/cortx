@@ -25,13 +25,17 @@ Classify the user input below into exactly one intent. Reply with ONLY valid JSO
 Schema: {"intent": "execution|decomposition|novel_reasoning|ambiguous", "confidence": 0.0-1.0}
 
 intent values:
-- execution: concrete task with a specific deliverable (write, translate, calculate, summarise, code)
-  e.g. "Write a haiku", "Summarise X in 3 sentences", "Translate this", "Write a function"
-- decomposition: broad goal needing a multi-step plan (how to build, steps to launch, architect)
+- execution: concrete task with a known, finite deliverable (write, translate, calculate, summarise, explain, code)
+  e.g. "Write a haiku", "Summarise X in 3 sentences", "Explain Y in 2 paragraphs", "Translate this", "Write a function"
+  NOTE: asking for output in N sentences/words/points is execution, not decomposition.
+- decomposition: broad HOW-TO goal requiring a multi-step process or plan
   e.g. "How would I build a SaaS?", "Plan a migration", "Steps to launch a startup"
+  NOTE: only use this when the request asks HOW to do something complex, not for a summary or explanation.
 - novel_reasoning: open-ended thinking with no single right answer (design, compare, analyse, ethics)
   e.g. "Design an economy for Mars", "Compare capitalism and socialism"
-- ambiguous: too vague to classify e.g. "Help.", "Do the thing."
+- ambiguous: missing a clear task — a single word, greeting, or fragment with no actionable request
+  e.g. "Help.", "Do the thing.", "What about it?", "Hey"
+  NOTE: if you cannot tell what the user wants to produce or achieve, choose ambiguous.
 
 User input: """
 
