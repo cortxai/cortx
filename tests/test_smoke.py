@@ -219,6 +219,27 @@ def test_chat_completions_returns_200(mock_classify_execution, mock_worker_respo
     assert body["choices"][0]["message"]["content"] == "Here is the result."
 
 
+def test_chat_completions_empty_messages_returns_clarification():
+    """No user messages in the request must not crash — return clarification."""
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "agentic", "messages": []},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["choices"][0]["message"]["role"] == "assistant"
+    assert len(body["choices"][0]["message"]["content"]) > 0
+
+
+def test_chat_completions_whitespace_only_message_returns_clarification():
+    """Whitespace-only user content must not crash — return clarification."""
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "agentic", "messages": [{"role": "user", "content": "   "}]},
+    )
+    assert response.status_code == 200
+
+
 # ---------------------------------------------------------------------------
 # Health check
 # ---------------------------------------------------------------------------

@@ -49,6 +49,7 @@ async def generate(user_input: str, intent: str) -> str:
         "stream": False,
         "options": {"num_predict": settings.max_tokens},
     }
+    logger.info("LLM call 2/2: worker model=%s intent=%s", settings.worker_model, intent)
     async with httpx.AsyncClient(timeout=settings.request_timeout) as client:
         resp = await client.post(f"{settings.ollama_base_url}/api/generate", json=payload)
         resp.raise_for_status()

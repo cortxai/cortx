@@ -62,14 +62,13 @@ async def ingest(request: IngestRequest) -> IngestResponse:
 
     total_latency = time.monotonic() - t_start
     logger.info(
-        "ingest completed",
-        extra={
-            "intent": classifier_result.intent,
-            "confidence": classifier_result.confidence,
-            "classifier_latency_s": round(t_classified - t_start, 3),
-            "worker_latency_s": round(t_worker - t_classified, 3),
-            "total_latency_s": round(total_latency, 3),
-        },
+        "request complete intent=%s confidence=%.2f "
+        "classifier_latency_s=%.3f worker_latency_s=%.3f total_latency_s=%.3f",
+        classifier_result.intent,
+        classifier_result.confidence,
+        round(t_classified - t_start, 3),
+        round(t_worker - t_classified, 3),
+        round(total_latency, 3),
     )
 
     return IngestResponse(
@@ -107,7 +106,10 @@ async def chat_completions(request: _OAIChatRequest) -> dict:
         "",
     )
 
-    result = await ingest(IngestRequest(input=user_text))
+    if not user_text.strip():
+        result = IngestResponse(intent="ambiguous", confidence=0.0, response=_CLARIFY_RESPONSE)
+    else:
+        result = await ingest(IngestRequest(input=user_text))
 
     return {
         "id": f"chatcmpl-{uuid.uuid4().hex}",
