@@ -24,21 +24,55 @@ logger = logging.getLogger(__name__)
 # System message sent to the model as the authoritative instruction.
 # User input is passed as a separate user turn — never interpolated here.
 _SYSTEM_PROMPT = """\
-You are an intent classifier. Given a user input, reply with ONLY a JSON object — no prose, no markdown.
-Use exactly this schema: {"intent": "<category>", "confidence": <0.0-1.0>}
+You are a strict intent classifier.
+
+Respond with ONLY valid JSON:
+{"intent": "<category>", "confidence": <0.0-1.0>}
 
 Categories:
-- execution   : a concrete task with a specific deliverable (write, translate, summarise, calculate, code)
-- decomposition: a broad HOW-TO request needing a multi-step plan (how to build, steps to launch, plan X)
-- novel_reasoning: open-ended thinking, design, or analysis with no single correct answer
-- ambiguous   : too vague — a fragment, single word, or greeting with no clear task
+- execution
+- decomposition
+- novel_reasoning
+- ambiguous
 
-Rules (apply in order — first match wins):
-1. If the request says "write", "generate", "create", "compose", "draft", or "produce" followed by a specific artifact (poem, haiku, essay, story, function, script, email, list) → execution, regardless of how creative the artifact is.
-2. "Summarise / explain / describe X in N sentences/words/paragraphs" → execution.
-3. "How do I / What steps / How would I / Plan / Walk me through" → decomposition.
-4. "Design / Compare / Analyse / Evaluate / What if / What are the implications" → novel_reasoning.
-5. Single word, greeting, or fragment with no clear task → ambiguous."""
+Definitions:
+
+execution:
+The user asks to create, write, generate, compose, draft, produce, summarise, translate, calculate, code, or output something.
+Creativity does NOT matter. If something must be produced, it is execution.
+
+decomposition:
+The user asks for steps, a plan, or how to do something.
+
+novel_reasoning:
+The user asks for comparison, evaluation, implications, analysis, or open-ended discussion.
+
+ambiguous:
+The request is a greeting, fragment, or unclear.
+
+Important:
+If the request asks to write, generate, or create something, it is ALWAYS execution.
+If unsure, choose execution.
+
+Examples:
+
+User: Write a haiku about rain.
+{"intent": "execution", "confidence": 0.95}
+
+User: Generate a short sci-fi story.
+{"intent": "execution", "confidence": 0.95}
+
+User: Summarise this in 3 sentences.
+{"intent": "execution", "confidence": 0.95}
+
+User: How do I start a podcast?
+{"intent": "decomposition", "confidence": 0.9}
+
+User: Compare Kubernetes and Nomad.
+{"intent": "novel_reasoning", "confidence": 0.9}
+
+User: Hello
+{"intent": "ambiguous", "confidence": 0.9}"""
 
 # Maps common LLM-generated intent variants to valid schema values.
 _INTENT_ALIASES: dict[str, str] = {
@@ -63,11 +97,24 @@ _INTENT_ALIASES: dict[str, str] = {
 _INTENT_FIELD_CANDIDATES = ("intent", "category", "type", "classification", "class")
 
 
+_EXECUTION_PREFIXES = (
+    "write", "generate", "create", "compose",
+    "draft", "produce", "summarise",
+    "summarize", "translate", "calculate",
+    "code", "list",
+)
+
+
 async def classify(user_input: str) -> ClassifierResponse:
     """Classify *user_input* and return a ClassifierResponse.
 
-    Retries once on bad JSON or network error; returns fallback on second failure.
+    Applies a deterministic prefix check before calling the LLM to eliminate
+    the most common misclassifications. Retries once on bad JSON or network
+    error; returns fallback on second failure.
     """
+    if user_input.lower().startswith(_EXECUTION_PREFIXES):
+        return ClassifierResponse(intent="execution", confidence=0.95)
+
     for attempt in range(2):
         try:
             raw = await _call_ollama(user_input)
@@ -102,7 +149,7 @@ async def _call_ollama(user_input: str) -> str:
         ],
         "format": "json",
         "stream": False,
-        "options": {"temperature": 0, "num_predict": 64},
+        "options": {"temperature": 0, "top_p": 0.8, "num_predict": 32},
     }
     logger.info("LLM call 1/2: classifier model=%s", settings.classifier_model)
     async with httpx.AsyncClient(timeout=settings.classifier_timeout) as client:
