@@ -5,8 +5,8 @@ The router is NOT an LLM. No probabilistic decisions are made here.
 
 ROUTES: dict[str, str] = {
     "execution": "worker",
-    "decomposition": "worker",
-    "novel_reasoning": "worker",
+    "planning": "worker",
+    "analysis": "worker",
     "ambiguous": "clarify",
 }
 

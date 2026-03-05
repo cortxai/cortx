@@ -31,8 +31,8 @@ Respond with ONLY valid JSON:
 
 Categories:
 - execution
-- decomposition
-- novel_reasoning
+- planning
+- analysis
 - ambiguous
 
 Definitions:
@@ -41,10 +41,10 @@ execution:
 The user asks to create, write, generate, compose, draft, produce, summarise, translate, calculate, code, or output something.
 Creativity does NOT matter. If something must be produced, it is execution.
 
-decomposition:
+planning:
 The user asks for steps, a plan, or how to do something.
 
-novel_reasoning:
+analysis:
 The user asks for comparison, evaluation, implications, analysis, or open-ended discussion.
 
 ambiguous:
@@ -66,10 +66,10 @@ User: Summarise this in 3 sentences.
 {"intent": "execution", "confidence": 0.95}
 
 User: How do I start a podcast?
-{"intent": "decomposition", "confidence": 0.9}
+{"intent": "planning", "confidence": 0.9}
 
 User: Compare Kubernetes and Nomad.
-{"intent": "novel_reasoning", "confidence": 0.9}
+{"intent": "analysis", "confidence": 0.9}
 
 User: Hello
 {"intent": "ambiguous", "confidence": 0.9}"""
@@ -82,12 +82,12 @@ _INTENT_ALIASES: dict[str, str] = {
     "task": "execution",
     "action": "execution",
     "command": "execution",
-    "analysis": "novel_reasoning",
-    "reasoning": "novel_reasoning",
-    "explanation": "novel_reasoning",
-    "synthesis": "novel_reasoning",
-    "planning": "decomposition",
-    "complex": "decomposition",
+    "novel_reasoning": "analysis",
+    "reasoning": "analysis",
+    "explanation": "analysis",
+    "synthesis": "analysis",
+    "decomposition": "planning",
+    "complex": "planning",
     "unclear": "ambiguous",
     "unknown": "ambiguous",
     "other": "ambiguous",

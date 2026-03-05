@@ -27,12 +27,12 @@ def test_router_execution_maps_to_worker():
     assert route("execution") == "worker"
 
 
-def test_router_decomposition_maps_to_worker():
-    assert route("decomposition") == "worker"
+def test_router_planning_maps_to_worker():
+    assert route("planning") == "worker"
 
 
-def test_router_novel_reasoning_maps_to_worker():
-    assert route("novel_reasoning") == "worker"
+def test_router_analysis_maps_to_worker():
+    assert route("analysis") == "worker"
 
 
 def test_router_ambiguous_maps_to_clarify():
@@ -266,20 +266,20 @@ async def test_worker_uses_execution_prompt():
 
 
 @pytest.mark.anyio
-async def test_worker_uses_decomposition_prompt():
-    """decomposition prompt requests numbered steps."""
+async def test_worker_uses_planning_prompt():
+    """planning prompt requests numbered steps."""
     from app.worker import _PROMPTS
 
-    prompt = _PROMPTS["decomposition"].lower()
+    prompt = _PROMPTS["planning"].lower()
     assert "numbered" in prompt or "step" in prompt
 
 
 @pytest.mark.anyio
-async def test_worker_uses_novel_reasoning_prompt():
-    """novel_reasoning prompt requests focused analytical response."""
+async def test_worker_uses_analysis_prompt():
+    """analysis prompt requests focused analytical response."""
     from app.worker import _PROMPTS
 
-    prompt = _PROMPTS["novel_reasoning"].lower()
+    prompt = _PROMPTS["analysis"].lower()
     assert "analytical" in prompt or "insight" in prompt or "focused" in prompt
 
 

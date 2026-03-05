@@ -6,7 +6,7 @@ from pydantic import BaseModel, field_validator
 
 
 class ClassifierResponse(BaseModel):
-    intent: Literal["execution", "decomposition", "novel_reasoning", "ambiguous"]
+    intent: Literal["execution", "planning", "analysis", "ambiguous"]
     confidence: float
 
 

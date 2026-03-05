@@ -21,12 +21,12 @@ _PROMPTS: dict[str, str] = {
         "Respond in no more than 150 words.\n\n"
         "User request: "
     ),
-    "decomposition": (
+    "planning": (
         "You are a structured assistant. The user needs a task broken into steps.\n"
         "Provide exactly 3 to 5 numbered steps. One sentence per step. No preamble.\n\n"
         "User request: "
     ),
-    "novel_reasoning": (
+    "analysis": (
         "You are an analytical assistant. The user wants open-ended thinking.\n"
         "Give a focused, insightful response. Limit to 3 sentences.\n\n"
         "User request: "
