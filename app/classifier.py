@@ -126,6 +126,17 @@ _PLANNING_PREFIXES = (
     "what steps",
 )
 
+_AMBIGUOUS_SHORT = (
+    "help",
+    "help.",
+    "hi",
+    "hello",
+    "hey",
+    "ok",
+    "okay",
+    "thanks",
+)
+
 async def classify(user_input: str) -> ClassifierResponse:
     """Classify *user_input* and return a ClassifierResponse.
 
@@ -133,8 +144,17 @@ async def classify(user_input: str) -> ClassifierResponse:
     the most common misclassifications. Retries once on bad JSON or network
     error; returns fallback on second failure.
     """
-    if user_input.lower().startswith(_EXECUTION_PREFIXES):
+
+    lower = user_input.lower().strip()
+
+    if lower.startswith(_EXECUTION_PREFIXES):
         return ClassifierResponse(intent="execution", confidence=0.95)
+
+    if lower.startswith(_PLANNING_PREFIXES):
+        return ClassifierResponse(intent="planning", confidence=0.95)
+
+    if lower.startswith(_AMBIGUOUS_SHORT):
+        return ClassifierResponse(intent="ambiguous", confidence=0.95)
 
     for attempt in range(2):
         try:
