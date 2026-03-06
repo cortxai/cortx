@@ -6,13 +6,14 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - OLLAMA_BASE_URL=http://host.docker.internal:11434
-      - CLASSIFIER_MODEL=llama3.2:3b
-      - WORKER_MODEL=llama3.2:3b
-      - CLASSIFIER_TIMEOUT=60
-      - WORKER_TIMEOUT=300
-      - MAX_TOKENS=256
-      - LOG_LEVEL=INFO
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - CLASSIFIER_MODEL=${CLASSIFIER_MODEL:-llama3.2:3b}
+      - WORKER_MODEL=${WORKER_MODEL:-llama3.2:3b}
+      - CLASSIFIER_TIMEOUT=${CLASSIFIER_TIMEOUT:-60}
+      - WORKER_TIMEOUT=${WORKER_TIMEOUT:-300}
+      - MAX_TOKENS=${MAX_TOKENS:-256}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - DEBUG_ROUTER=${DEBUG_ROUTER:-false}
     extra_hosts:
       # Allows the container to reach Ollama running on the host.
       # Works automatically on Docker Desktop (Mac/Windows).

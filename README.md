@@ -43,6 +43,8 @@ OLLAMA_BASE_URL=http://192.168.1.50:11434 docker compose up --build
 
 Or edit `OLLAMA_BASE_URL` directly in `docker-compose.yml`.
 
+> **How overrides work:** `docker-compose.yml` uses `${VAR:-default}` interpolation for all settings. Variables set in your shell take precedence over the defaults; you never need to edit the file for one-off runs.
+
 ### Configure the model
 
 The classifier and worker can use different models. Override via env vars or edit `docker-compose.yml`:
