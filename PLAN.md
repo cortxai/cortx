@@ -1,137 +1,337 @@
-# PHASE 2 -- INTENT-AWARE EXECUTION & RELIABILITY HARDENING
+# PHASE 3 — Observability, Debug Logging, and Router Transparency
 
 ## Objective
 
-Phase 2 upgrades the Phase 1 architecture by:
+Phase 3 focuses on **observability and router transparency**.  
+The goal is to make the behaviour of the system visible during development so that routing
+decisions, classifier outputs, retries, and worker execution can be inspected.
 
--   Making worker prompting intent-aware
--   Hardening classifier reliability
--   Enforcing deterministic behavior
--   Improving observability
--   Strengthening failure handling
+This phase does **not change the core architecture** introduced in Phase 2:
+User → Classifier → Router → Worker
 
-This document is designed to be read as context by an LLM-powered coding
-assistant.
+Instead, it introduces structured logging, correlation IDs, and debugging tools.
 
-------------------------------------------------------------------------
+---
 
-# Architectural Constraints (Must Remain True)
+# Architecture (unchanged)
 
-1.  Single entrypoint: `/ingest`
-2.  Exactly two LLM calls per successful request:
-    -   1 classifier call
-    -   1 worker call
-3.  Router remains pure Python (no LLM calls)
-4.  No memory layer
-5.  No tool execution
-6.  No autonomous planning
+User Input
+↓
+Classifier (LLM)
+↓
+Intent Router
+↓
+Worker (LLM)
+↓
+Response
 
-------------------------------------------------------------------------
+---
 
-# Scope of Changes
+# Key Additions
 
-## 1. Intent-Aware Worker Prompting
+## 1. Structured Logging
 
-Worker behavior must differ based on intent:
+Replace ad‑hoc prints with **structured logs** using the project logger.
 
-### execution
+Example:
 
--   Direct, concise answer
--   No planning structure
+```python
+logger.info(
+    "intent_router",
+    request_id=request_id,
+    input=user_input,
+    intent=intent,
+    route=route,
+    confidence=confidence
+)
+```
 
-### decomposition
+### Logging Goals
 
--   Structured output
--   Steps / phases clearly enumerated
+* Inspect router decisions
+* Inspect classifier behaviour
+* Detect prompt failures
+* Track retries and fallbacks
+* Measure latency
+* Correlate events per request
 
-### novel_reasoning
+---
 
--   Creative exploration
--   Speculative or system-design style output
+# 2. Request Correlation IDs
 
-### ambiguous
+Each incoming request should generate a unique identifier.
 
--   No worker call
--   Return clarification question
+Example:
 
-Implementation requirement: - Worker receives both `input_text` and
-`intent` - Worker selects prompt template based on intent
+```python
+import uuid
 
-------------------------------------------------------------------------
+request_id = str(uuid.uuid4())
+```
 
-## 2. Classifier Hardening
+The `request_id` should be passed through:
 
-Classifier must:
+* classifier
+* router
+* worker
+* response logging
 
--   Use temperature = 0
--   Use deterministic prompt
--   Require strict JSON output
--   Validate via Pydantic schema
--   Retry once if invalid
--   Return ambiguous if still invalid
+Example:
 
-Expected schema:
+```python
+logger.info(
+    "request_received",
+    request_id=request_id,
+    input=user_input
+)
+```
 
-{ "intent": "execution \| decomposition \| novel_reasoning \|
-ambiguous", "confidence": float }
+---
 
-------------------------------------------------------------------------
+# 3. Classifier Debug Logging
 
-## 3. Observability
+The classifier must log:
 
-Log the following per request:
+### Raw Model Output
 
--   intent
--   confidence
--   classifier latency
--   worker latency
--   total latency
+```python
+logger.debug(
+    "classifier_raw_output",
+    request_id=request_id,
+    output=response_text
+)
+```
 
-Logs must clearly show exactly two LLM calls.
+### Parsed Result
 
-------------------------------------------------------------------------
+```python
+logger.info(
+    "classifier_result",
+    request_id=request_id,
+    intent=intent,
+    confidence=confidence
+)
+```
 
-## 4. Failure Handling
+### Retry Events
 
-System must gracefully handle:
+```python
+logger.warning(
+    "classifier_retry",
+    request_id=request_id,
+    reason="invalid_json"
+)
+```
 
--   Ollama unavailable
--   Model not found
--   Invalid classifier JSON
--   Empty input
--   Worker timeout
+---
 
-Failure result format:
+# 4. Router Decision Logging
 
-{ "intent": "ambiguous", "confidence": 0.0, "response":
-"`<polite clarification or failure message>`{=html}" }
+The router should log how the intent maps to a worker.
 
-System must not crash.
+Example:
 
-------------------------------------------------------------------------
+```python
+logger.info(
+    "intent_router",
+    request_id=request_id,
+    input=user_input,
+    intent=intent,
+    route=route,
+    confidence=confidence
+)
+```
 
-# Non-Goals
+If an unknown intent occurs:
 
--   No memory persistence
--   No conversation history
--   No external API calls
--   No tool execution
--   No autonomous loops
+```python
+logger.warning(
+    "router_fallback",
+    request_id=request_id,
+    intent=intent
+)
+```
 
-------------------------------------------------------------------------
+---
 
-# Completion Criteria
+# 5. Worker Execution Logs
 
-Phase 2 is complete when:
+Each worker execution should produce two logs.
 
--   Worker output style changes by intent
--   Classifier intent is stable across repeated runs
--   Exactly 2 LLM calls per successful request
--   Ambiguous intent properly blocks worker call
--   System survives Ollama shutdown
--   Deterministic behavior confirmed
+### Worker Start
 
-------------------------------------------------------------------------
+```python
+logger.info(
+    "worker_start",
+    request_id=request_id,
+    worker=worker_name
+)
+```
 
-# End of Phase 2 Plan
+### Worker Completion
+
+```python
+logger.info(
+    "worker_complete",
+    request_id=request_id,
+    worker=worker_name,
+    latency_ms=latency
+)
+```
+
+---
+
+# 6. Latency Metrics
+
+Capture timing for:
+
+* classifier latency
+* worker latency
+* full request latency
+
+Example:
+
+```python
+start = time.time()
+...
+latency_ms = int((time.time() - start) * 1000)
+```
+
+Example log:
+
+```python
+logger.info(
+    "classifier_latency",
+    request_id=request_id,
+    latency_ms=latency_ms
+)
+```
+
+---
+
+# 7. DEBUG_ROUTER Mode
+
+Add an environment variable:
+
+```
+DEBUG_ROUTER=true
+```
+
+When enabled:
+
+* classifier prompts can be logged (truncated)
+* router decision traces are expanded
+* worker prompts are optionally logged
+
+Example:
+
+```python
+if DEBUG_ROUTER:
+    logger.debug(
+        "classifier_prompt",
+        request_id=request_id,
+        prompt=prompt[:500]
+    )
+```
+
+---
+
+# 8. Debug Route Inspection Endpoint
+
+Add a development endpoint:
+
+```
+GET /debug/routes
+```
+
+Returns:
+
+```
+{
+  "routes": {
+    "question_answering": "qa_worker",
+    "summarisation": "summary_worker",
+    "general": "general_worker"
+  }
+}
+```
+
+Purpose:
+
+* Inspect router configuration
+* Validate new intents during development
+
+---
+
+# 9. Logging Schema
+
+Standard log events should include:
+
+| Field | Description |
+|------|-------------|
+| request_id | Correlation ID |
+| event | Log event name |
+| input | User input (optional) |
+| intent | Classifier result |
+| route | Router destination |
+| worker | Worker executed |
+| latency_ms | Execution time |
+
+---
+
+# 10. Example End‑to‑End Log Trace
+
+```
+request_received
+classifier_raw_output
+classifier_result
+intent_router
+worker_start
+worker_complete
+request_complete
+```
+
+This allows complete request tracing.
+
+---
+
+# Deliverables
+
+Phase 3 should produce:
+
+* structured logging across the pipeline
+* request correlation IDs
+* classifier debug visibility
+* router decision logging
+* worker execution logging
+* latency metrics
+* DEBUG_ROUTER mode
+* `/debug/routes` endpoint
+* updated tests
+
+---
+
+# Non‑Goals
+
+Phase 3 **does not introduce**:
+
+* memory
+* tool calling
+* semantic routing
+* vector databases
+* multi-agent orchestration
+
+Those are future phases.
+
+---
+
+# Expected Outcome
+
+After Phase 3 you should be able to:
+
+* see why the classifier chose an intent
+* see how the router mapped the intent
+* inspect worker execution
+* detect malformed LLM outputs
+* trace every request through the system
 
