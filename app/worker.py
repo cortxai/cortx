@@ -1,7 +1,12 @@
 """Worker agent — calls the LLM to produce the final user-facing response.
 
-Receives original user input and classifier intent; returns free-form text.
-No memory, no tools.
+Receives original user input and classifier intent; returns a JSON action
+envelope for the ToolExecutor to dispatch:
+
+  {"action": "respond", "content": "..."}          — direct reply
+  {"action": "tool", "tool": "<name>", "args": {}} — tool call
+
+No memory, no conversation history.
 """
 
 import logging
@@ -15,21 +20,36 @@ logger = logging.getLogger(__name__)
 
 # Intent-specific prompt templates; user input is appended via concatenation to
 # avoid Python str.format() treating user-supplied braces as placeholders.
+#
+# All prompts instruct the LLM to respond with a JSON action envelope so that
+# the ToolExecutor can either relay the content directly or invoke a tool.
 _PROMPTS: dict[str, str] = {
     "execution": (
         "You are a precise assistant. The user has asked you to perform a concrete task.\n"
         "Give a direct, concise answer. No planning structure. No preamble. No commentary.\n"
         "Respond in no more than 150 words.\n\n"
+        "Respond with valid JSON in one of these two formats:\n"
+        'Direct answer: {"action": "respond", "content": "<your complete answer here>"}\n'
+        'Read a file:   {"action": "tool", "tool": "read_file", "args": {"path": "<absolute path>"}}\n\n'
+        "Use the tool ONLY when the task explicitly requires reading file contents from disk.\n\n"
         "User request: "
     ),
     "planning": (
         "You are a structured assistant. The user needs a task broken into steps.\n"
         "Provide exactly 3 to 5 numbered steps. One sentence per step. No preamble.\n\n"
+        "Respond with valid JSON in one of these two formats:\n"
+        'Direct answer: {"action": "respond", "content": "<your numbered steps here>"}\n'
+        'Read a file:   {"action": "tool", "tool": "read_file", "args": {"path": "<absolute path>"}}\n\n'
+        "Use the tool ONLY when the task explicitly requires reading file contents from disk.\n\n"
         "User request: "
     ),
     "analysis": (
         "You are an analytical assistant. The user wants open-ended thinking.\n"
         "Give a focused, insightful response. Limit to 3 sentences.\n\n"
+        "Respond with valid JSON in one of these two formats:\n"
+        'Direct answer: {"action": "respond", "content": "<your analytical response here>"}\n'
+        'Read a file:   {"action": "tool", "tool": "read_file", "args": {"path": "<absolute path>"}}\n\n'
+        "Use the tool ONLY when the task explicitly requires reading file contents from disk.\n\n"
         "User request: "
     ),
 }

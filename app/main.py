@@ -7,6 +7,7 @@ Exposes:
   GET  /debug/routes            — development: inspect intent→handler routing table
 """
 
+import json
 import logging
 import time
 import uuid
@@ -20,11 +21,15 @@ from app.models import IngestRequest, IngestResponse
 from app.router import ROUTES, route
 from app.settings import settings
 from app.worker import generate
+from bootstrap_tools import tool_registry
+from core.tools import ToolExecutor, parse_agent_output
 
 logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Agentic Platform — Ingress API")
+
+executor = ToolExecutor(tool_registry)
 
 _CLARIFY_RESPONSE = (
     "I'm not sure what you're asking. Could you provide more detail or clarify your request?"
@@ -64,9 +69,25 @@ async def ingest(request: IngestRequest) -> IngestResponse:
         response_text = _CLARIFY_RESPONSE
         t_worker = t_classified
     else:
+        logger.info(
+            "event=agent_selected request_id=%s agent=worker",
+            request_id,
+        )
         try:
             response_text = await generate(request.input, classifier_result.intent, request_id)
-        except httpx.HTTPError as exc:
+            try:
+                action = parse_agent_output(response_text, request_id=request_id)
+                response_text = executor.execute(action, request_id=request_id)
+            except json.JSONDecodeError:
+                # LLM returned plain text instead of JSON — treat as direct reply.
+                pass
+            except Exception as exc:
+                logger.error(
+                    "event=tool_execution_error request_id=%s error_type=%s error=%r",
+                    request_id, type(exc).__name__, str(exc),
+                )
+                response_text = _WORKER_FAILURE_RESPONSE
+        except (httpx.HTTPError, httpx.RequestError) as exc:
             status = getattr(exc.response, "status_code", "N/A") if hasattr(exc, "response") else "N/A"
             body = ""
             if hasattr(exc, "response") and exc.response is not None:

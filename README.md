@@ -1,18 +1,18 @@
-# :brain: Cortex
+# :brain: CortX AI
 
 > **This project is in Alpha - it may introduce breaking changes** | **This project is not production ready**
 
-**Cortex** is a local-first intelligent automation platform designed to turn natural language into reliable, structured system behaviour.
+**CortX** is a local-first intelligent automation platform designed to turn natural language into reliable, structured system behaviour.
 
-Rather than being a single model, service, or workflow engine, Cortex is an orchestration layer that connects language understanding, structured reasoning, and tool execution into a cohesive system. Its purpose is simple: allow humans to describe *what they want*, while Cortex determines *how to accomplish it* safely and deterministically.
+Rather than being a single model, service, or workflow engine, CortX is an orchestration layer that connects language understanding, structured reasoning, and tool execution into a cohesive system. Its purpose is simple: allow humans to describe *what they want*, while CortX determines *how to accomplish it* safely and deterministically.
 
-At its core, Cortex is built around a clear principle: **language should be an interface, not the system itself**.
+At its core, CortX is built around a clear principle: **language should be an interface, not the system itself**.
 
-Large language models are powerful interpreters of intent, but they are not inherently reliable decision engines. Cortex separates interpretation from execution, using structured routing, deterministic validation, and controlled tool interfaces to convert ambiguous human input into predictable outcomes.
+Large language models are powerful interpreters of intent, but they are not inherently reliable decision engines. CortX separates interpretation from execution, using structured routing, deterministic validation, and controlled tool interfaces to convert ambiguous human input into predictable outcomes.
 
 The platform is designed to run **locally and privately**, allowing individuals, engineers, and organisations to build intelligent systems without depending on external APIs or opaque infrastructure. Every component — from the language models to the orchestration layer — is intended to be deployable within environments you control.
 
-Over time, Cortex aims to evolve into a foundation for building intelligent software systems where:
+Over time, CortX aims to evolve into a foundation for building intelligent software systems where:
 
 - Natural language becomes a **first-class interface**
 - Automation remains **transparent and debuggable**
@@ -20,11 +20,16 @@ Over time, Cortex aims to evolve into a foundation for building intelligent soft
 - Tools and services can be **safely composed and extended**
 - Systems remain **local-first, modular, and developer-friendly**
 
-The long-term vision of Cortex is to provide a platform where intelligent behaviour emerges from **clear architecture rather than prompt engineering** — enabling developers to build systems that are understandable, reliable, and adaptable as language models continue to evolve.
+---
 
-In this model, Cortex is not the intelligence itself.
+## What CortX can do today (v0.2.0)
 
-It is the **cognitive layer** that allows intelligence, software, and real-world actions to work together.
+- **Understand intent** — classifies every request as `execution`, `planning`, `analysis`, or `ambiguous` using a local LLM, with deterministic prefix checks for common patterns.
+- **Route deterministically** — maps intent to the correct execution path using a pure Python dict, not another LLM.
+- **Generate structured responses** — selects an intent-aware prompt, calls the worker LLM, and returns a response tailored to the type of request.
+- **Execute tools** — agents return structured JSON specifying either a direct reply or a tool to run; the ToolExecutor carries out the action safely.
+- **Read files** — the built-in `read_file` tool reads any local file by path and returns its contents.
+- **Observe everything** — every request gets a unique ID; every step emits a structured log event.
 
 ---
 
@@ -37,15 +42,37 @@ User (browser)
               └─► POST /ingest  (internal orchestration)
                     ├─► Classifier  — LLM call 1/2 → intent + confidence
                     ├─► Router      — pure Python dict lookup → handler
-                    └─► Worker      — LLM call 2/2 → response text
+                    └─► Worker      — LLM call 2/2 → JSON action envelope
+                                         │
+                                    Action Parser
+                                         │
+                                    Tool Executor  → Tool Result
 ```
 
 - **Classifier** — calls Ollama, returns one of `execution | planning | analysis | ambiguous`. Deterministic prefix checks short-circuit common patterns before any LLM call.
 - **Router** — a Python dict. Given the same intent, always returns the same handler. No LLM involved.
-- **Worker** — selects an intent-aware prompt template, calls Ollama, returns free-form text.
+- **Worker** — selects an intent-aware prompt template, calls Ollama, and returns a JSON action envelope.
+- **Action Parser** — parses the agent's JSON output into a typed `AgentAction`.
+- **Tool Executor** — the only component that can run tools. Looks up the tool by name in the `ToolRegistry` and calls it deterministically. Agents never execute tools directly.
 - **OpenWebUI** — UI only. `ENABLE_OLLAMA_API=false`. It cannot bypass the pipeline.
 
 Ollama runs on the host machine, not in Docker. The container reaches it via `host.docker.internal:11434`.
+
+### Agent output contract
+
+Agents (the worker LLM) must return strict JSON. Two formats are supported:
+
+**Direct reply:**
+```json
+{"action": "respond", "content": "Here is the answer."}
+```
+
+**Tool call:**
+```json
+{"action": "tool", "tool": "read_file", "args": {"path": "notes.md"}}
+```
+
+If the LLM returns plain text instead of JSON, CortX gracefully falls back to treating it as a direct response.
 
 ---
 
@@ -72,6 +99,11 @@ curl -X POST http://localhost:8000/ingest \
   -H "Content-Type: application/json" \
   -d '{"input": "Compare Kubernetes and Nomad"}'
 # → {"intent":"analysis","confidence":0.9,"response":"..."}
+
+# 4. Request file reading via tool call (the worker will emit tool JSON if prompted)
+curl -X POST http://localhost:8000/ingest \
+  -H "Content-Type: application/json" \
+  -d '{"input": "Read the file /etc/hostname"}'
 ```
 
 > ⚠️ If your input contains an apostrophe (`I'm`, `don't`), it will close the shell string and curl will appear to freeze. Use `'\''` to escape or write the payload to a file: `-d @body.json`
@@ -129,20 +161,27 @@ docker compose logs -f ingress
 docker compose logs ingress | grep "request_id=<id>"
 ```
 
-**Typical log sequence:**
+**Typical log sequence (with tool execution):**
 ```
 event=request_received      request_id=<id>
 event=llm_call              request_id=<id> call=1/2 model=llama3.2:3b
-event=classifier_result     request_id=<id> intent=analysis confidence=0.90 source=llm
-event=classifier_latency    request_id=<id> latency_ms=1820
-event=intent_router         request_id=<id> intent=analysis route=worker confidence=0.90
-event=worker_start          request_id=<id> worker=worker intent=analysis
-event=llm_call              request_id=<id> call=2/2 model=llama3.2:3b intent=analysis
-event=worker_complete       request_id=<id> worker=worker latency_ms=3240
-event=request_complete      request_id=<id> intent=analysis confidence=0.90 total_latency_ms=5063
+event=classifier_result     request_id=<id> intent=execution confidence=0.95 source=prefix_match
+event=intent_router         request_id=<id> intent=execution route=worker confidence=0.95
+event=agent_selected        request_id=<id> agent=worker
+event=worker_start          request_id=<id> worker=worker intent=execution
+event=llm_call              request_id=<id> call=2/2 model=llama3.2:3b intent=execution
+event=worker_complete       request_id=<id> worker=worker latency_ms=2100
+event=agent_output_received raw={"action":"tool","tool":"read_file",...}
+event=agent_action_parsed   action=tool tool=read_file
+event=executor_received     action=tool tool=read_file
+event=tool_lookup           tool=read_file
+event=tool_execute          tool=read_file args={'path': 'notes.md'}
+event=tool_execute_complete tool=read_file result_type=str
+event=tool_result           tool=read_file result_type=str
+event=request_complete      request_id=<id> intent=execution confidence=0.95 total_latency_ms=2350
 ```
 
-For inputs matching a prefix (`Write...`, `How do I...`) the classifier short-circuits — no `llm_call 1/2` or `classifier_latency` appears, and `source=prefix_match`.
+For inputs matching a prefix (`Write...`, `How do I...`) the classifier short-circuits — no `llm_call 1/2` appears, and `source=prefix_match`.
 
 **Enable prompt logging:**
 ```bash
