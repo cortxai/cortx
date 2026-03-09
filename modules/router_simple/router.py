@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 
+from coretex.config.settings import settings
 from coretex.interfaces.router import Router
 
 logger = logging.getLogger(__name__)
@@ -40,4 +41,13 @@ class RouterSimple(Router):
             request_id, intent, handler, confidence,
             str(user_input)[:120] if user_input else "",
         )
+
+        if settings.debug_router:
+            logger.debug(
+                "event=router_decision intent=%s handler=%s request_id=%s",
+                intent,
+                handler,
+                request_id,
+            )
+
         return handler

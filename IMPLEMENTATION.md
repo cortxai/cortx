@@ -1,6 +1,6 @@
 # Implementation Description — COREtex Runtime Platform
 
-> This document describes the current state of the implementation as of v0.3.0 (Runtime Extraction).
+> This document describes the current state of the implementation as of v0.3.x (Stabilisation).
 > It is intended to be read as context by an LLM when planning future phases of the project.
 
 ---
@@ -9,7 +9,9 @@
 
 COREtex is a **local agentic runtime platform** that routes user requests through a two-stage LLM pipeline (classifier → worker) using locally-hosted models via [Ollama](https://ollama.com), then passes the agent's JSON output through a deterministic tool execution layer.
 
-v0.3.0 restructures the codebase from a monolithic `app/` package into a **modular runtime** with three distinct layers: the `coretex/` runtime package (interfaces, registries, execution engine), `modules/` (pluggable component implementations), and `distributions/` (assembled applications).
+v0.3.0 restructured the codebase from a monolithic `app/` package into a **modular runtime** with three distinct layers: the `coretex/` runtime package (interfaces, registries, execution engine), `modules/` (pluggable component implementations), and `distributions/` (assembled applications).
+
+v0.3.x Stabilisation hardened the runtime with: explicit pipeline failure categories and graceful handling, full structured logging lifecycle, registry validation with consistent error messages, ModuleLoader signature validation and empty-registration detection, `load_all()` lifecycle events, router debug logging, and expanded test coverage to 106 tests.
 
 ---
 
@@ -19,7 +21,7 @@ v0.3.0 restructures the codebase from a monolithic `app/` package into a **modul
 User (browser)
   └─► OpenWebUI  (port 3000)
         └─► POST /v1/chat/completions  ← OpenAI-compatible shim
-              └─► POST /ingest         ← distribution entry point (cortx_local)
+              └─► POST /ingest         ← distribution entry point (cortx)
                     └─► PipelineRunner.run(ExecutionContext)
                           ├─► ClassifierBasic.classify()  → ClassificationResult(intent, confidence)
                           ├─► RouterSimple.route(intent)  → handler name
@@ -58,26 +60,26 @@ coretex/
   __init__.py
   interfaces/
     __init__.py
-    classifier.py       — Classifier ABC + ClassificationResult(intent, confidence) dataclass
+    classifier.py       — Classifier ABC + ClassificationResult(intent, confidence, source) dataclass
     router.py           — Router ABC
     worker.py           — Worker ABC
     model_provider.py   — ModelProvider ABC
   registry/
     __init__.py
-    tool_registry.py    — Tool dataclass, ToolRegistry
-    module_registry.py  — ModuleRegistry (stores classifier/router/worker instances by name)
-    model_registry.py   — ModelProviderRegistry
-    pipeline_registry.py — PipelineRegistry
+    tool_registry.py    — Tool dataclass, ToolRegistry (raises ValueError on dup/unknown, logs registry_lookup_failed)
+    module_registry.py  — ModuleRegistry: classifier/router/worker (raises ValueError on dup/unknown, logs registry_lookup_failed)
+    model_registry.py   — ModelProviderRegistry (raises ValueError on dup/unknown, logs registry_lookup_failed)
+    pipeline_registry.py — PipelineRegistry (raises ValueError on dup/unknown, logs registry_lookup_failed)
   runtime/
     __init__.py
-    context.py          — ExecutionContext dataclass (request_id, input, metadata)
-    events.py           — EventBus
-    loader.py           — ModuleLoader (calls register() on each module)
+    context.py          — ExecutionContext dataclass (request_id, input, intent, confidence, handler, t_start, timestamp, metadata)
+    events.py           — EventBus (emit/emit_warning/emit_error structured log wrappers)
+    loader.py           — ModuleLoader (signature validation, empty-registration warning, load_all() lifecycle events)
     executor.py         — AgentAction, ToolExecutor, parse_agent_output
-    pipeline.py         — PipelineRunner
+    pipeline.py         — PipelineRunner (full log lifecycle, explicit failure categories)
   config/
     __init__.py
-    settings.py         — Pydantic-settings config
+    settings.py         — Pydantic-settings config (debug_router, log_level, etc.)
 
 modules/
   __init__.py
@@ -87,7 +89,7 @@ modules/
     module.py           — register(module_registry, tool_registry, model_registry)
   router_simple/
     __init__.py
-    router.py           — RouterSimple(Router): ROUTES dict + route() function
+    router.py           — RouterSimple(Router): ROUTES dict + route() + debug_router logging
     module.py
   worker_llm/
     __init__.py
@@ -104,17 +106,22 @@ modules/
 
 distributions/
   __init__.py
-  cortx_local/
+  cortx/
     __init__.py
-    main.py             — FastAPI app: /ingest, /v1/chat/completions, /debug/routes, /health
+    main.py             — FastAPI app: /ingest, /v1/chat/completions, /debug/routes, /health, /v1/models
     models.py           — Pydantic schemas: IngestRequest, IngestResponse
-    bootstrap.py        — Creates registries, loads all modules via ModuleLoader
+    bootstrap.py        — Creates registries, loads all modules via loader.load_all()
 
 tests/
-  test_smoke.py         — All tests (unit + integration via TestClient, Ollama fully mocked)
+  test_smoke.py         — All tests (106 unit + integration via TestClient, Ollama fully mocked)
 
-Dockerfile              — python:3.11-slim, uvicorn distributions.cortx_local.main:app
-docker-compose.yml      — ingress + openwebui services on an isolated bridge network
+docs/
+  runtime.md            — Runtime architecture, pipeline execution, failure behaviour
+  module_development.md — How to build modules
+  distributions.md      — How to build distributions
+
+Dockerfile              — python:3.11-slim, uvicorn distributions.cortx.main:app
+docker-compose.yml      — ingress + openwebui services on isolated bridge network
 requirements.txt        — fastapi, uvicorn, httpx, pydantic, pydantic-settings, pytest
 pytest.ini              — pythonpath = . so all package imports resolve without install
 ```
@@ -127,18 +134,18 @@ pytest.ini              — pythonpath = . so all package imports resolve withou
 
 Pydantic `BaseSettings` subclass. All values overridable via environment variables or `.env` file.
 
-| Setting               | Default                              | Purpose                              |
-|-----------------------|--------------------------------------|--------------------------------------|
-| `ollama_base_url`     | `http://host.docker.internal:11434`  | Base URL for all Ollama API calls    |
-| `classifier_model`    | `llama3.2:3b`                        | Model used by the classifier agent   |
-| `worker_model`        | `llama3.2:3b`                        | Model used by the worker agent       |
-| `classifier_timeout`  | `60` (seconds)                       | httpx timeout for classifier call    |
-| `worker_timeout`      | `300` (seconds)                      | httpx timeout for worker call        |
-| `max_tokens`          | `256`                                | `num_predict` passed to worker       |
-| `log_level`           | `INFO`                               | Python logging level                 |
-| `debug_router`        | `false`                              | When `true`, log prompts at DEBUG    |
+| Setting               | Default                              | Purpose                                        |
+|-----------------------|--------------------------------------|------------------------------------------------|
+| `ollama_base_url`     | `http://host.docker.internal:11434`  | Base URL for all Ollama API calls              |
+| `classifier_model`    | `llama3.2:3b`                        | Model used by the classifier agent             |
+| `worker_model`        | `llama3.2:3b`                        | Model used by the worker agent                 |
+| `classifier_timeout`  | `60` (seconds)                       | httpx timeout for classifier call              |
+| `worker_timeout`      | `300` (seconds)                      | httpx timeout for worker call                  |
+| `max_tokens`          | `256`                                | `num_predict` passed to worker                 |
+| `log_level`           | `INFO`                               | Python logging level                           |
+| `debug_router`        | `false`                              | When `true`, emit event=router_decision DEBUG  |
 
-Singleton `settings` imported by all modules.
+Singleton `settings` imported by all modules that need configuration.
 
 ---
 
@@ -146,48 +153,93 @@ Singleton `settings` imported by all modules.
 
 ABCs establishing contracts:
 
-- **`Classifier`** — `classify(input: str, **kwargs) -> ClassificationResult`
-- **`Router`** — `route(intent: str) -> str`
-- **`Worker`** — `generate(input: str, intent: str, **kwargs) -> str`
-- **`ModelProvider`** — `complete(prompt: str, **kwargs) -> str`, `is_available() -> bool`
-- **`ClassificationResult`** — `@dataclass` with `intent: str, confidence: float`
+- **`Classifier`** — `async classify(input: str, request_id: str = "") -> ClassificationResult`
+- **`Router`** — `route(intent: str, request_id: str = "", **kwargs) -> str`
+- **`Worker`** — `async generate(input: str, intent: str, request_id: str = "") -> str`
+- **`ModelProvider`** — `async generate(model, prompt, **kwargs) -> str`, `async chat(model, messages, **kwargs) -> str`
+- **`ClassificationResult`** — `@dataclass` with `intent: str, confidence: float, source: str`
 
 ---
 
 ### `coretex/registry/`
 
-- **`ToolRegistry`** — stores `Tool` dataclasses by name. `register()` raises `ValueError` on duplicates. `get()` raises `ValueError` for unknown tools (logs `event=tool_lookup_failed`). `list()` returns all names.
-- **`Tool`** — `@dataclass` with `name`, `description`, `input_schema`, `function`. `execute(args)` calls the function and logs `event=tool_execute` / `event=tool_execute_complete`.
-- **`ModuleRegistry`** — stores component instances by name. `register_classifier(name, instance)`, `get_classifier(name)`, and equivalents for router, worker.
+All four registries follow identical safety rules:
+- `register()` raises `ValueError("Component already registered: <name>")` on duplicates
+- `get()` raises `ValueError("Unknown component: <name>")` on unknown name AND logs `event=registry_lookup_failed component=<type> name=<name>`
+
+- **`ToolRegistry`** — stores `Tool` dataclasses. `register(name, desc, schema, fn)`, `get(name)`, `list()`.
+- **`Tool`** — `@dataclass` with `name`, `description`, `input_schema`, `function`. `execute(args, request_id)` logs `event=tool_execute` / `event=tool_execute_complete`.
+- **`ModuleRegistry`** — stores classifier/router/worker instances by name. `register_classifier/router/worker()`, `get_classifier/router/worker()`, `mark_loaded()`, `list_loaded()`.
+- **`ModelProviderRegistry`** — stores `ModelProvider` instances. `register(name, provider)`, `get(name)`, `list()`.
+- **`PipelineRegistry`** — placeholder for v0.4.0 configurable pipelines. `register(name, pipeline)`, `get(name)`, `list()`.
 
 ---
 
-### `coretex/runtime/executor.py`
+### `coretex/runtime/context.py`
 
-- **`AgentAction`** — typed wrapper for agent JSON output: `action`, `tool`, `args`, `content`. `from_dict()` is the primary constructor.
-- **`ToolExecutor`** — dispatches on `action.action`: `"respond"` returns `action.content` directly; `"tool"` looks up the tool and calls it; anything else raises `ValueError`.
-- **`parse_agent_output(raw)`** — parses a JSON string into `AgentAction`. Logs `event=agent_output_received`. Raises and logs `event=agent_output_parse_error` on failure.
-
----
-
-### `coretex/runtime/pipeline.py`
-
-`PipelineRunner` wraps all three registries. `run(context: ExecutionContext) -> Tuple[str, str, float]` returns `(response_text, intent, confidence)`.
-
-Pipeline:
-1. Get classifier from module_registry → `ClassificationResult`
-2. Get router from module_registry → handler name
-3. If handler is `"clarify"`: return `_CLARIFY_RESPONSE` directly
-4. If handler is `"worker"`: get worker → raw JSON string → `parse_agent_output` → `ToolExecutor.execute` → response text
-5. On JSON parse error: treat raw as direct response (graceful fallback)
-6. On tool `ValueError`: return `_WORKER_FAILURE_RESPONSE`
-7. On `httpx.HTTPError`: return `_WORKER_FAILURE_RESPONSE` with `intent="ambiguous", confidence=0.0`
+```python
+@dataclass
+class ExecutionContext:
+    user_input: str
+    request_id: str                    # auto-generated UUID hex
+    intent: Optional[str]              # set after classification
+    confidence: float                  # set after classification
+    handler: Optional[str]             # set after routing
+    t_start: float                     # monotonic timestamp (for latency)
+    timestamp: float                   # wall-clock time.time() (for observability)
+    metadata: Optional[Dict[str, Any]] # optional free-form module metadata
+```
 
 ---
 
 ### `coretex/runtime/loader.py`
 
-`ModuleLoader.load()` imports each module's `module.py` and calls `register(module_registry=..., tool_registry=..., model_registry=...)`. Called once at startup from `distributions/cortx_local/bootstrap.py`.
+`ModuleLoader` loads modules at startup. Validation steps per `load()` call:
+
+1. `importlib.import_module(path)` — raises `ImportError` on failure (logs `event=module_import_failed`)
+2. Check `mod.register` exists and is callable — raises `ValueError("Module '...' has no register() function")`
+3. Check signature has all three params (`module_registry`, `tool_registry`, `model_registry`) — raises `ValueError("Invalid module register() signature ...")`
+4. Execute `mod.register(...)`, count new registrations
+5. If 0 components registered: `logger.warning("event=module_loaded ... warning=module_registered_nothing")`
+6. Otherwise: `logger.info("event=module_loaded module=... registered_components=N")`
+
+`load_all(paths)` emits `event=module_loading_start` and `event=module_loading_complete`.
+
+---
+
+### `coretex/runtime/executor.py`
+
+- **`AgentAction`** — typed wrapper: `action`, `tool`, `args`, `content`. `from_dict()` is the constructor.
+- **`ToolExecutor`** — dispatches on `action.action`: `"respond"` returns `action.content`; `"tool"` looks up and calls the tool; unknown action raises `ValueError`.
+- **`parse_agent_output(raw)`** — parses JSON string into `AgentAction`. Logs `event=agent_output_received`. Raises and logs `event=agent_output_parse_error` on failure.
+
+---
+
+### `coretex/runtime/pipeline.py`
+
+`PipelineRunner.run(context)` returns `(response_text, intent, confidence)`.
+
+Full log lifecycle:
+```
+event=request_received
+event=classifier_start
+event=classifier_complete    (includes intent, confidence, duration_ms)
+event=router_selected        (includes intent, handler)
+event=worker_start           (includes worker name, intent)
+event=worker_complete        (includes duration_ms)
+event=agent_output_received
+event=tool_execute / event=tool_execute_complete
+event=request_complete       (includes all latencies: classifier_latency_ms, worker_latency_ms, total_latency_ms)
+```
+
+Failure categories:
+
+| Failure | Event | Behaviour |
+|---------|-------|-----------|
+| Classifier HTTP error | `event=pipeline_classifier_failure` | `intent=ambiguous`, clarification response |
+| Worker HTTP error | `event=pipeline_worker_failure` | worker failure response, `intent=ambiguous` |
+| Tool lookup/runtime error | `event=pipeline_tool_failure` | worker failure response |
+| Agent JSON parse error | `event=pipeline_agent_parse_failure` | raw text treated as direct response |
 
 ---
 
@@ -195,10 +247,10 @@ Pipeline:
 
 **Stage 1 — Deterministic prefix check (no LLM)**
 
-Lowercases the input and matches against:
-- `_EXECUTION_PREFIXES`: `("write", "generate", "create", "compose", "draft", "produce", "summarise", "summarize", "translate", "calculate", "code", "list")` → `intent="execution", confidence=0.95`
-- `_PLANNING_PREFIXES`: `("how do i", "how would i", "how can i", "what steps")` → `intent="planning", confidence=0.95`
-- `_AMBIGUOUS_SHORT`: `("help", "hi", "hello", "hey", "ok", "okay", "thanks")` → `intent="ambiguous", confidence=0.95`
+Lowercases input and matches against prefix lists:
+- `_EXECUTION_PREFIXES` → `intent="execution", confidence=0.95`
+- `_PLANNING_PREFIXES` → `intent="planning", confidence=0.95`
+- `_AMBIGUOUS_SHORT` → `intent="ambiguous", confidence=0.95`
 
 **Stage 2 — LLM call via `_call_ollama()`**
 
@@ -206,7 +258,7 @@ Calls Ollama `/api/chat`. Up to 2 attempts. Falls back to `ClassificationResult(
 
 **`_parse()` normalisation:** strip markdown fences → `json.loads` → `_ClassifierResponse` Pydantic validation → field-name scan → alias map → graceful `ambiguous` fallback.
 
-`_ClassifierResponse` is an internal Pydantic model (prefixed `_`) that enforces `Literal["execution", "planning", "analysis", "ambiguous"]` on the intent field.
+`_ClassifierResponse` enforces `Literal["execution", "planning", "analysis", "ambiguous"]` on the intent field.
 
 ---
 
@@ -221,105 +273,82 @@ ROUTES = {
 }
 ```
 
-`RouterSimple.route(intent)` returns the handler name. Unknown intents fall back to `"clarify"`.
+`RouterSimple.route(intent)` returns handler name. Unknown intents → `"clarify"`. When `settings.debug_router == True`, emits `event=router_decision` at DEBUG level.
 
 ---
 
 ### `modules/worker_llm/worker.py`
 
-Generates the final user-facing response. Intent-aware via `_PROMPTS` dict (execution, planning, analysis, plus a `_FALLBACK_PROMPT`). All prompts instruct the LLM to return:
-```json
-{"action": "respond", "content": "..."}
-```
-or a tool call:
-```json
-{"action": "tool", "tool": "<name>", "args": {"<key>": "<value>"}}
-```
-
-User input is **appended** with `+` — never `str.format()`. `generate()` raises `httpx.HTTPError` on failure; the caller handles gracefully.
+Intent-aware via `_PROMPTS` dict (execution, planning, analysis, `_FALLBACK_PROMPT`). All prompts instruct the LLM to return a JSON action envelope. User input is appended with `+` — never `str.format()`.
 
 ---
 
 ### `modules/tools_filesystem/filesystem.py`
 
-`read_file(path: str) -> str` — reads and returns the text content of a file. Returns `"File not found: <path>"` if the file does not exist (never raises).
+`read_file(path: str) -> str` — reads file text. Returns `"File not found: <path>"` on missing file (never raises).
 
 ---
 
-### `modules/model_provider_ollama/provider.py`
+### `distributions/cortx/bootstrap.py`
 
-`OllamaProvider(ModelProvider)` — wraps the Ollama HTTP API. `complete(prompt, model, timeout, **kwargs)` calls `/api/generate`. `is_available()` checks connectivity.
-
----
-
-### `distributions/cortx_local/bootstrap.py`
-
-Creates `module_registry`, `tool_registry`, `model_registry` singletons. Calls `ModuleLoader.load()` for all five modules. Imported by `main.py` at module load time.
+Creates three registry singletons. Calls `ModuleLoader.load_all([...])` with all five module paths. Emits module loading lifecycle events. Imported by `main.py` at module load time.
 
 ---
 
-### `distributions/cortx_local/main.py`
+### `distributions/cortx/main.py`
 
-The FastAPI application.
-
-#### `POST /ingest`
-
-1. Generate `request_id = uuid4().hex`; log `event=request_received`
-2. Create `ExecutionContext(request_id=request_id, input=request.input)`
-3. Call `pipeline.run(context)` → `(response_text, intent, confidence)`
-4. Log `event=request_complete` with timing
-5. Return `IngestResponse`
-
-**Other endpoints:**
-- `POST /v1/chat/completions` — OpenAI-compatible shim, extracts last user message and calls `/ingest` internally
-- `GET /debug/routes` — returns `ROUTES` dict from `modules.router_simple.router`
+FastAPI endpoints:
+- `POST /ingest` — creates `ExecutionContext`, calls `pipeline.run()`, returns `IngestResponse`
+- `POST /v1/chat/completions` — OpenAI-compatible shim, extracts last user message, calls pipeline
+- `GET /debug/routes` — returns `ROUTES` dict
 - `GET /health` — returns `{"status": "ok"}`
-- `GET /v1/models` — returns the agentic model descriptor for OpenWebUI
+- `GET /v1/models` — returns the `agentic` model descriptor for OpenWebUI
 
 ---
 
-### `distributions/cortx_local/models.py`
+### `distributions/cortx/models.py`
 
-Two Pydantic v2 models:
-- **`IngestRequest`** — `input: str`. A `field_validator` rejects empty or whitespace-only strings (returns HTTP 422).
+- **`IngestRequest`** — `input: str`. Validator rejects empty/whitespace (HTTP 422).
 - **`IngestResponse`** — `intent: str`, `confidence: float`, `response: str`.
 
 ---
 
 ## Testing
 
-All tests are in `tests/test_smoke.py`. **64 tests** covering all components.
+All tests in `tests/test_smoke.py`. **106 tests** covering all components.
 
 **Test runner:** `pytest tests/test_smoke.py -v`
 
-Async tests use `@pytest.mark.anyio`. All Ollama calls are mocked with `AsyncMock`. Patch targets use the new module paths:
-- `modules.classifier_basic.classifier.ClassifierBasic.classify`
-- `modules.worker_llm.worker.WorkerLLM.generate`
+Async tests use `@pytest.mark.anyio`. All Ollama calls mocked with `AsyncMock`.
 
-Mock fixtures return `ClassificationResult(intent=..., confidence=...)` from `coretex.interfaces.classifier`.
+Test categories:
+- Router unit tests (pure Python)
+- Classifier internal validation and parsing
+- Classifier behaviour with mocked Ollama
+- `/ingest` happy path and edge cases
+- `/v1/chat/completions` shim
+- Health and model list endpoints
+- Worker prompt content validation
+- Tool registry: register, get, duplicate, unknown, list
+- AgentAction: parsing, defaults
+- ToolExecutor: respond, tool, unknown action, missing tool name, runtime exception
+- `parse_agent_output`: valid, invalid JSON
+- Filesystem tool
+- Registry duplicate and unknown-lookup tests (all four registries)
+- ModuleLoader: valid module, missing register(), wrong signature, empty registration, ImportError, load_all() lifecycle
+- Pipeline failure scenarios: classifier HTTP failure, worker HTTP failure, invalid JSON, tool lookup failure, tool runtime exception
+- Logging event tests: all key pipeline events present, latency fields present
+- ExecutionContext: timestamp, metadata
+- Router debug_router setting
 
 ---
 
-## Infrastructure
+## What Has Been Built
 
-### Dockerfile
-
-- Base image: `python:3.11-slim`
-- Workdir: `/workspace`
-- Copies: `requirements.txt`, `coretex/`, `modules/`, `distributions/`
-- Entry point: `uvicorn distributions.cortx_local.main:app --host 0.0.0.0 --port 8000`
-
-### `docker-compose.yml`
-
-Two services on an isolated `agentic` bridge network: `ingress` (port 8000) and `openwebui` (port 3000). OpenWebUI has `ENABLE_OLLAMA_API=false`.
-
----
-
-## What Has Been Done
-
-- **v0.1.x**: Skeleton FastAPI service, `/ingest`, classifier LLM call, deterministic router, basic worker LLM call, smoke tests, Docker/Compose setup, OpenWebUI integration.
-- **v0.2.x**: Intent-aware worker prompts, classifier hardening (prefix checks, alias normalisation, field-name scanning, markdown fence stripping, retry-with-fallback), graceful worker failure handling, request correlation IDs, structured log events, `DEBUG_ROUTER`, `GET /debug/routes`, tool execution layer, `read_file` tool, `bootstrap_tools.py`, updated worker prompts for JSON action envelopes, integrated executor into pipeline.
-- **v0.3.0**: Runtime extraction — `coretex/` package (interfaces, registries, executor, pipeline, loader, context, events, config); `modules/` (classifier_basic, router_simple, worker_llm, tools_filesystem, model_provider_ollama); `distributions/cortx_local/` (FastAPI app, models, bootstrap); updated Dockerfile; removed legacy `app/`, `core/`, `tools/`, `bootstrap_tools.py`; updated test suite for new import paths.
+- **v0.1.x**: Skeleton FastAPI service, `/ingest`, classifier LLM call, deterministic router, basic worker LLM call, smoke tests, Docker/Compose, OpenWebUI integration.
+- **v0.2.x**: Intent-aware worker prompts, classifier hardening (prefix checks, alias normalisation, markdown fence stripping, retry-with-fallback), graceful failure handling, request correlation IDs, structured logging, `DEBUG_ROUTER`, `GET /debug/routes`, tool execution layer, `read_file` tool, worker JSON action envelope prompts, integrated executor into pipeline.
+- **v0.3.0**: Runtime extraction — `coretex/` package (interfaces, registries, executor, pipeline, loader, context, events, config); `modules/`; `distributions/cortx/`; updated Dockerfile; removed legacy `app/`, `core/`, `tools/`.
+- **v0.3.x Stabilisation**: Hardened pipeline with explicit failure categories and full log lifecycle; standardised registry validation (consistent error messages, `event=registry_lookup_failed`); ModuleLoader signature validation, empty-registration warning, `load_all()` lifecycle events; `ExecutionContext` metadata and timestamp fields; router `debug_router` logging; expanded test suite (64 → 106 tests); `docs/runtime.md`, `docs/module_development.md`, `docs/distributions.md`.
 
 ---
 
@@ -333,4 +362,5 @@ Two services on an isolated `agentic` bridge network: `ingress` (port 8000) and 
 - Persistent storage of any kind
 - Rate limiting
 - Multiple model backends (only Ollama supported)
-- Separate classifier and worker model instances (both default to the same model)
+- Async tool execution
+- Plugin dependency graphs

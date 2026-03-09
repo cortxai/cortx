@@ -3,6 +3,12 @@
 This is the core of the v0.3.0 runtime. It retrieves components from the module
 registry rather than importing them directly, satisfying Guardrail 2 (runtime
 must never depend on modules).
+
+Failure behaviour:
+    ClassificationFailure   → fallback to intent=ambiguous, return clarification response
+    WorkerFailure           → return worker failure response, set intent=ambiguous
+    ToolExecutionFailure    → return worker failure response
+    AgentParseFailure       → treat raw output as plain-text response (JSON parse error)
 """
 
 from __future__ import annotations
@@ -34,6 +40,15 @@ class PipelineRunner:
 
     Components are resolved from the module registry at runtime, so the pipeline
     never hard-codes which classifier, router, or worker implementation is used.
+
+    The pipeline follows these steps for every request:
+        1. Classify  — determine intent and confidence via the registered classifier.
+        2. Route     — select a handler deterministically based on intent.
+        3. Execute   — invoke the worker (if routed to one), parse its JSON output,
+                       and run any requested tool through ToolExecutor.
+
+    All failure modes are handled gracefully; no request produces an unhandled
+    exception that would result in a 500 response.
     """
 
     def __init__(
@@ -53,7 +68,7 @@ class PipelineRunner:
     async def run(self, context: ExecutionContext) -> Tuple[str, str, float]:
         """Execute the pipeline for the given *context*.
 
-        Returns ``(response_text, intent, confidence)``.
+        Returns a tuple of ``(response_text, intent, confidence)``.
         """
         logger.info("event=request_received request_id=%s", context.request_id)
         t_start = context.t_start
@@ -62,23 +77,57 @@ class PipelineRunner:
         # Step 1: Classify
         # ------------------------------------------------------------------
         classifier = self._modules.get_classifier(self._classifier_name)
-        classification = await classifier.classify(context.user_input, context.request_id)
-        t_classified = time.monotonic()
 
-        context.intent = classification.intent
-        context.confidence = classification.confidence
+        logger.info("event=classifier_start request_id=%s classifier=%s", context.request_id, self._classifier_name)
+        t_classify_start = time.monotonic()
+
+        try:
+            classification = await classifier.classify(context.user_input, context.request_id)
+        except (httpx.HTTPError, httpx.RequestError) as exc:
+            logger.error(
+                "event=pipeline_classifier_failure request_id=%s error_type=%s error=%r",
+                context.request_id,
+                type(exc).__name__,
+                str(exc),
+            )
+            classification = None
+
+        t_classified = time.monotonic()
+        classifier_latency_ms = int((t_classified - t_classify_start) * 1000)
+
+        if classification is None:
+            context.intent = "ambiguous"
+            context.confidence = 0.0
+        else:
+            context.intent = classification.intent
+            context.confidence = classification.confidence
+
+        logger.info(
+            "event=classifier_complete request_id=%s intent=%s confidence=%.2f duration_ms=%d",
+            context.request_id,
+            context.intent,
+            context.confidence,
+            classifier_latency_ms,
+        )
 
         # ------------------------------------------------------------------
         # Step 2: Route
         # ------------------------------------------------------------------
         router = self._modules.get_router(self._router_name)
         handler = router.route(
-            classification.intent,
+            context.intent,
             request_id=context.request_id,
             user_input=context.user_input,
-            confidence=classification.confidence,
+            confidence=context.confidence,
         )
         context.handler = handler
+
+        logger.info(
+            "event=router_selected request_id=%s intent=%s handler=%s",
+            context.request_id,
+            context.intent,
+            handler,
+        )
 
         # ------------------------------------------------------------------
         # Step 3: Execute handler
@@ -88,23 +137,39 @@ class PipelineRunner:
             t_worker = t_classified
         else:
             logger.info(
-                "event=agent_selected request_id=%s agent=worker",
+                "event=worker_start request_id=%s worker=%s intent=%s",
                 context.request_id,
+                self._worker_name,
+                context.intent,
             )
+            t_worker_start = time.monotonic()
+
             try:
                 worker = self._modules.get_worker(self._worker_name)
                 response_text = await worker.generate(
-                    context.user_input, classification.intent, context.request_id
+                    context.user_input, context.intent, context.request_id
                 )
+
+                logger.info(
+                    "event=worker_complete request_id=%s duration_ms=%d",
+                    context.request_id,
+                    int((time.monotonic() - t_worker_start) * 1000),
+                )
+
                 try:
                     action = parse_agent_output(response_text, request_id=context.request_id)
                     response_text = self._executor.execute(action, request_id=context.request_id)
                 except json.JSONDecodeError:
-                    # LLM returned plain text instead of JSON — treat as direct reply.
-                    pass
+                    # AgentParseFailure — LLM returned plain text instead of JSON.
+                    logger.info(
+                        "event=pipeline_agent_parse_failure request_id=%s "
+                        "reason=json_decode_error treating as plain text",
+                        context.request_id,
+                    )
                 except Exception as exc:
+                    # ToolExecutionFailure — tool lookup or runtime exception.
                     logger.error(
-                        "event=tool_execution_error request_id=%s error_type=%s error=%r",
+                        "event=pipeline_tool_failure request_id=%s error_type=%s error=%r",
                         context.request_id,
                         type(exc).__name__,
                         str(exc),
@@ -112,6 +177,7 @@ class PipelineRunner:
                     response_text = _WORKER_FAILURE_RESPONSE
 
             except (httpx.HTTPError, httpx.RequestError) as exc:
+                # WorkerFailure — Ollama unreachable or HTTP error.
                 status = getattr(exc.response, "status_code", "N/A") if hasattr(exc, "response") else "N/A"
                 body = ""
                 if hasattr(exc, "response") and exc.response is not None:
@@ -120,7 +186,7 @@ class PipelineRunner:
                     except Exception:
                         pass
                 logger.error(
-                    "event=worker_error request_id=%s error_type=%s status=%s body=%r error=%r",
+                    "event=pipeline_worker_failure request_id=%s error_type=%s status=%s body=%r error=%r",
                     context.request_id,
                     type(exc).__name__,
                     status,
@@ -135,12 +201,13 @@ class PipelineRunner:
 
         total_latency_ms = int((time.monotonic() - t_start) * 1000)
         logger.info(
-            "event=request_complete request_id=%s intent=%s confidence=%.2f "
+            "event=request_complete request_id=%s intent=%s confidence=%.2f handler=%s "
             "classifier_latency_ms=%d worker_latency_ms=%d total_latency_ms=%d",
             context.request_id,
             context.intent,
             context.confidence,
-            int((t_classified - t_start) * 1000),
+            context.handler,
+            classifier_latency_ms,
             int((t_worker - t_classified) * 1000),
             total_latency_ms,
         )
