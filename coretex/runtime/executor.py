@@ -25,6 +25,15 @@ logger = logging.getLogger(__name__)
 
 
 class AgentAction:
+    """Represents a structured action emitted by the worker agent.
+
+    Attributes:
+        action: The action type — ``"respond"`` or ``"tool"``.
+        tool: The tool name to call (only when ``action == "tool"``).
+        args: Keyword arguments to pass to the tool function.
+        content: The direct response content (only when ``action == "respond"``).
+    """
+
     def __init__(
         self,
         action: Optional[str],
@@ -39,6 +48,7 @@ class AgentAction:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> AgentAction:
+        """Construct an AgentAction from a parsed JSON dict."""
         logger.info(
             "event=agent_action_parsed action=%s tool=%s",
             data.get("action"),
@@ -58,12 +68,36 @@ class AgentAction:
 
 
 class ToolExecutor:
-    """The only component that can run tools. Dispatches on AgentAction.action."""
+    """The only component that can run tools. Dispatches on AgentAction.action.
+
+    Supported action types:
+        ``respond`` — return ``action.content`` directly without executing any tool.
+        ``tool``    — look up ``action.tool`` in the registry and call it with ``action.args``.
+
+    Any unknown action type raises ``ValueError``.
+    Tool lookup failure (unknown name) or tool runtime exceptions propagate to
+    the caller; the ``PipelineRunner`` catches them and returns a graceful failure response.
+    """
 
     def __init__(self, registry: ToolRegistry) -> None:
         self.registry = registry
 
     def execute(self, action: AgentAction, request_id: str = "") -> Any:
+        """Execute *action* and return the result.
+
+        Args:
+            action: The parsed agent action to execute.
+            request_id: Optional request ID for structured log correlation.
+
+        Returns:
+            For ``respond`` actions: the content string (may be ``None``).
+            For ``tool`` actions: the return value of the tool function.
+
+        Raises:
+            ValueError: For unknown action types or missing tool names.
+            ValueError: If the requested tool is not registered.
+            Exception: Any exception raised by the tool function itself.
+        """
         logger.info(
             "event=executor_received action=%s tool=%s request_id=%s",
             action.action,
@@ -110,6 +144,16 @@ def parse_agent_output(raw: str, request_id: str = "") -> AgentAction:
     Raises json.JSONDecodeError if *raw* is not valid JSON, or any other
     exception if the parsed structure is unusable.  The caller is responsible
     for graceful fallback.
+
+    Args:
+        raw: The raw string output from the worker LLM.
+        request_id: Optional request ID for structured log correlation.
+
+    Returns:
+        A parsed ``AgentAction`` instance.
+
+    Raises:
+        json.JSONDecodeError: If *raw* is not valid JSON.
     """
     logger.info(
         "event=agent_output_received request_id=%s raw=%r",
