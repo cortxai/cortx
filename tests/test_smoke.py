@@ -733,7 +733,7 @@ def test_ingest_unknown_tool_returns_failure_response(mock_classify_execution):
 
 
 def test_ingest_agent_selected_event_logged(caplog, mock_classify_execution, mock_worker_response):
-    """event=agent_selected is emitted when the worker is invoked."""
+    """event=worker_start is emitted when the worker is invoked."""
     import logging
 
     with caplog.at_level(logging.INFO, logger="coretex.runtime.pipeline"):
@@ -743,7 +743,7 @@ def test_ingest_agent_selected_event_logged(caplog, mock_classify_execution, moc
         ):
             client.post("/ingest", json={"input": "Run a task"})
 
-    assert any("agent_selected" in r.message for r in caplog.records)
+    assert any("worker_start" in r.message for r in caplog.records)
 
 
 def test_ingest_unexpected_tool_exception_returns_200_failure(mock_classify_execution):
