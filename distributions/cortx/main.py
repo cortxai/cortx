@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from coretex.config.settings import settings
 from coretex.runtime.context import ExecutionContext
-from coretex.runtime.pipeline import PipelineRunner
+from coretex.runtime.pipeline import PipelineRunner, CLARIFY_RESPONSE
 from distributions.cortx.bootstrap import module_registry, tool_registry
 from distributions.cortx.models import IngestRequest, IngestResponse
 from modules.router_simple.router import ROUTES
@@ -28,10 +28,6 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="CortX — cortx distribution")
 
 pipeline = PipelineRunner(module_registry=module_registry, tool_registry=tool_registry)
-
-_CLARIFY_RESPONSE = (
-    "I'm not sure what you're asking. Could you provide more detail or clarify your request?"
-)
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +86,7 @@ async def chat_completions(request: _OAIChatRequest) -> dict:
     )
 
     if not user_text.strip():
-        result = IngestResponse(intent="ambiguous", confidence=0.0, response=_CLARIFY_RESPONSE)
+        result = IngestResponse(intent="ambiguous", confidence=0.0, response=CLARIFY_RESPONSE)
     else:
         result = await ingest(IngestRequest(input=user_text))
 

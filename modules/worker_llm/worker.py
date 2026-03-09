@@ -7,7 +7,6 @@ implements the Worker interface.
 from __future__ import annotations
 
 import logging
-import time
 
 import httpx
 
@@ -73,21 +72,11 @@ class WorkerLLM(Worker):
             "options": {"num_predict": settings.max_tokens},
         }
         logger.info(
-            "event=worker_start request_id=%s worker=worker intent=%s",
-            request_id, intent,
-        )
-        logger.info(
             "event=llm_call request_id=%s call=2/2 model=%s intent=%s",
             request_id, settings.worker_model, intent,
         )
-        t_start = time.monotonic()
         async with httpx.AsyncClient(timeout=settings.worker_timeout) as client:
             resp = await client.post(f"{settings.ollama_base_url}/api/generate", json=payload)
             resp.raise_for_status()
             response_text = resp.json()["response"]
-        latency_ms = int((time.monotonic() - t_start) * 1000)
-        logger.info(
-            "event=worker_complete request_id=%s worker=worker latency_ms=%d",
-            request_id, latency_ms,
-        )
         return response_text

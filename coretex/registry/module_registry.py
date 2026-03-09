@@ -91,3 +91,7 @@ class ModuleRegistry:
     def list_loaded(self) -> list[str]:
         """Return a copy of the list of loaded module paths."""
         return list(self._loaded)
+
+    def component_count(self) -> int:
+        """Return the total number of registered classifiers, routers, and workers."""
+        return len(self._classifiers) + len(self._routers) + len(self._workers)

@@ -27,7 +27,7 @@ from coretex.runtime.executor import ToolExecutor, parse_agent_output
 
 logger = logging.getLogger(__name__)
 
-_CLARIFY_RESPONSE = (
+CLARIFY_RESPONSE = (
     "I'm not sure what you're asking. Could you provide more detail or clarify your request?"
 )
 _WORKER_FAILURE_RESPONSE = (
@@ -133,7 +133,7 @@ class PipelineRunner:
         # Step 3: Execute handler
         # ------------------------------------------------------------------
         if handler == "clarify":
-            response_text = _CLARIFY_RESPONSE
+            response_text = CLARIFY_RESPONSE
             t_worker = t_classified
         else:
             logger.info(

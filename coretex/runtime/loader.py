@@ -87,10 +87,7 @@ class ModuleLoader:
             )
 
         # Count registered components before and after to detect empty registration.
-        before_classifiers = len(self._module_registry._classifiers)
-        before_routers = len(self._module_registry._routers)
-        before_workers = len(self._module_registry._workers)
-        before_tools = len(self._tool_registry._tools)
+        before = self._module_registry.component_count() + len(self._tool_registry.list())
 
         mod.register(
             module_registry=self._module_registry,
@@ -98,16 +95,8 @@ class ModuleLoader:
             model_registry=self._model_registry,
         )
 
-        after_classifiers = len(self._module_registry._classifiers)
-        after_routers = len(self._module_registry._routers)
-        after_workers = len(self._module_registry._workers)
-        after_tools = len(self._tool_registry._tools)
-
         registered_components = (
-            (after_classifiers - before_classifiers)
-            + (after_routers - before_routers)
-            + (after_workers - before_workers)
-            + (after_tools - before_tools)
+            self._module_registry.component_count() + len(self._tool_registry.list()) - before
         )
 
         self._module_registry.mark_loaded(module_path)
